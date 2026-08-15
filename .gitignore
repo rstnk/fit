@@ -3,6 +3,7 @@
 
 # --- Project ---
 .fit-*/
+bin
 
 # --- macOS ---
 # General
