@@ -1,0 +1,51 @@
+#compdef fit
+# Hand-written zsh completion for fit. It reads preset names out of the config
+# file rather than being generated, so it stays correct when you edit presets.
+
+_fit_presets() {
+  local conf="${XDG_CONFIG_HOME:-$HOME/.config}/fit/presets.toml"
+  [[ -r $conf ]] || return
+  local -a names
+  names=(${(f)"$(sed -n 's/^\[\([a-zA-Z0-9_-]*\)\].*/\1/p' $conf)"})
+  _describe -t presets 'preset' names
+}
+
+_fit() {
+  local -a commands
+  commands=(
+    'info:probe and report'
+    'ls:list presets'
+    'undo:move the last run'\''s outputs to the trash'
+    'cut:trim by stream copy'
+    'still:extract one frame'
+    'help:show usage'
+    'version:show the version'
+  )
+
+  _arguments -s \
+    '(-t --target)'{-t,--target}'[preset name]:preset:_fit_presets' \
+    '(-o --out-dir)'{-o,--out-dir}'[output directory]:directory:_files -/' \
+    '(-n --dry-run)'{-n,--dry-run}'[print commands, write nothing]' \
+    '(-f --force)'{-f,--force}'[overwrite outputs]' \
+    '-j[concurrency]:jobs:' \
+    '--under[size cap]:size:(2M 5M 8M 10MiB 25MiB 100M)' \
+    '--width[width ceiling]:pixels:(640 720 1080 1280 1600 1920 2560 3840)' \
+    '--height[height ceiling]:pixels:(480 720 1080 1440 2160)' \
+    '(-q --quality)'{-q,--quality}'[quality 1-100]:quality:(50 70 82 90 95)' \
+    '--format[output format]:format:(jpeg jpg png webp avif heic tiff mp4 h264 h265 hevc av1 webm mkv mov m4a aac mp3 opus flac wav)' \
+    '--json[NDJSON output]' \
+    '(-v --verbose)'{-v,--verbose}'[show the solver'\''s reasoning]' \
+    '--config[presets file]:file:_files' \
+    '1: :->first' \
+    '*:file:_files'
+
+  case $state in
+    first)
+      _describe -t commands 'command' commands
+      _fit_presets
+      _files
+      ;;
+  esac
+}
+
+_fit "$@"
