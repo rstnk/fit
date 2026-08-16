@@ -226,14 +226,14 @@ func failRun(err error) int {
 func usage(w io.Writer) {
 	fmt.Fprint(w, `fit — get media files to fit a target
 
-  fit <preset> [files...] [overrides]   apply a named preset
-  fit [files...]                        apply the [default] preset, if defined
-  fit [files...] --under 8M --width 1080  apply bare constraints
-  fit info [files...]                   probe and report
-  fit ls                                list presets
-  fit undo                              move the last run's outputs to the trash
-  fit cut <file> <range>                trim by stream copy, e.g. 00:10-01:30
-  fit still <file> [@time]              extract one frame
+  fit <preset> [files...] [overrides]      apply a named preset
+  fit [files...]                           apply the [default] preset, if defined
+  fit [files...] --under 8M --width 1080   apply bare constraints
+  fit info [files...]                      probe and report
+  fit ls                                   list presets
+  fit undo                                 move the last run's outputs to the trash
+  fit cut <file> <range>                   trim by stream copy, e.g. 00:10-01:30
+  fit still <file> [@time]                 extract one frame
 
 Flags
   -t, --target <name>   preset, when the positional slot is ambiguous
