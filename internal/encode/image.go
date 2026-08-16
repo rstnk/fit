@@ -41,7 +41,7 @@ func (e *Encoder) EncodeImage(ctx context.Context, j Job) (Result, error) {
 	}
 	defer ws.close()
 
-	res := Result{Out: t.Out, Width: t.Width, Height: t.Height}
+	res := Result{Width: t.Width, Height: t.Height}
 
 	var xmp string
 	if needsXMP(t.Spec.Ext) {
@@ -81,7 +81,6 @@ func (e *Encoder) EncodeImage(ctx context.Context, j Job) (Result, error) {
 		if !ok {
 			break
 		}
-		res.Attempts++
 
 		if att.Round != round {
 			round = att.Round

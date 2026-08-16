@@ -114,6 +114,12 @@ func (r *Reporter) line(rec Record) string {
 		label = rec.Input + " → " + rec.Output
 	case StatusFail:
 		sym = symFail
+		// The note on a failure is often about the output, not the input:
+		// "exists and was not made by fit" reads as a plain untruth against an
+		// input's name when it is the output that is in the way.
+		if rec.Output != "" {
+			label = rec.Input + " → " + rec.Output
+		}
 	case StatusSkip:
 		switch {
 		case rec.Note == "already current":

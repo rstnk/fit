@@ -70,15 +70,14 @@ type Job struct {
 	FP     string
 }
 
-// Result reports what actually came out.
+// Result reports what actually came out. It is read by the caller building a
+// ui.Record and never serialised itself, so it carries no struct tags.
 type Result struct {
-	Out           string     `json:"out"`
-	Size          int64      `json:"size"`
-	Width, Height int        `json:"-"`
-	Bitrate       int        `json:"bitrate,omitempty"`
-	Quality       int        `json:"quality,omitempty"`
-	Attempts      int        `json:"attempts,omitempty"`
-	Commands      [][]string `json:"commands,omitempty"`
+	Size          int64
+	Width, Height int
+	Bitrate       int
+	Quality       int
+	Commands      [][]string
 }
 
 // workspace is a temporary directory beside the destination, so the final

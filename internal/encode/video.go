@@ -44,12 +44,11 @@ func (e *Encoder) EncodeVideo(ctx context.Context, j Job) (Result, error) {
 	}
 	defer ws.close()
 
-	res := Result{Out: t.Out, Width: j.Video.Width, Height: j.Video.Height}
+	res := Result{Width: j.Video.Width, Height: j.Video.Height}
 	tmp := ws.path("out." + t.Spec.Ext)
 	bitrate := j.Video.Bitrate
 
 	for attempt := 1; attempt <= 2; attempt++ {
-		res.Attempts = attempt
 		vp := j.Video
 		vp.Bitrate = bitrate
 		vp.MaxRate = bitrate * 3 / 2
@@ -237,7 +236,7 @@ func (e *Encoder) EncodeAudio(ctx context.Context, j Job) (Result, error) {
 	var res Result
 	for attempt := 1; attempt <= 2; attempt++ {
 		a := e.audioOnlyArgs(j, keepCover, bitrate, tmp)
-		res.Out, res.Attempts, res.Bitrate = t.Out, attempt, bitrate*1000
+		res.Bitrate = bitrate * 1000
 		res.Commands = append(res.Commands, cmdline(e.FFmpeg, a))
 		if err := e.exec(ctx, e.FFmpeg, a...); err != nil {
 			return res, err
@@ -298,14 +297,20 @@ func (e *Encoder) audioOnlyArgs(j Job, keepCover bool, bitrate int, out string) 
 	}
 	codec := t.Spec.AudioCodec
 	a = append(a, "-c:a", codec)
-	if hasBitrateKnob(codec) {
-		a = append(a, "-b:a", strconv.Itoa(bitrate)+"k")
-	}
-	if t.Cons.AudioMono {
-		a = append(a, "-ac", "1")
-	}
-	if t.Cons.AudioLoudnorm {
-		a = append(a, "-af", LoudnormFilter)
+	// Nothing below means anything to a copied stream, and ffmpeg rejects the
+	// filters outright rather than ignoring them. Constraints.Validate catches
+	// the contradictory preset first; this keeps the builder correct on its own,
+	// the way audioArgs on the video path already is.
+	if codec != "copy" {
+		if hasBitrateKnob(codec) {
+			a = append(a, "-b:a", strconv.Itoa(bitrate)+"k")
+		}
+		if t.Cons.AudioMono {
+			a = append(a, "-ac", "1")
+		}
+		if t.Cons.AudioLoudnorm {
+			a = append(a, "-af", LoudnormFilter)
+		}
 	}
 	return append(a, "-metadata", "comment="+fingerprint.Marker(j.FP), out)
 }

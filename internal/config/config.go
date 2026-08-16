@@ -114,6 +114,28 @@ type Constraints struct {
 	CopyVideo bool `json:"copy_video"`
 }
 
+// Validate reports a resolved set that contradicts itself. Copying the audio
+// stream and filtering it are mutually exclusive: ffmpeg refuses a filtergraph
+// on a copied stream, and without this the run died on its bare "Invalid
+// argument" with nothing to say which two keys disagreed.
+func (c Constraints) Validate() error {
+	if !strings.EqualFold(c.AudioCodec, "copy") {
+		return nil
+	}
+	var conflicts []string
+	if c.AudioMono {
+		conflicts = append(conflicts, "audio_mono")
+	}
+	if c.AudioLoudnorm {
+		conflicts = append(conflicts, "audio_loudnorm")
+	}
+	if len(conflicts) == 0 {
+		return nil
+	}
+	return fmt.Errorf(`audio_codec = "copy" cannot be combined with %s, a copied stream cannot be filtered`,
+		strings.Join(conflicts, " and "))
+}
+
 // Canonical renders the constraints as sorted key=value lines. This is the
 // text the fingerprint hashes, so it must not depend on map iteration order.
 func (c Constraints) Canonical() string {
@@ -158,11 +180,12 @@ func (p *Preset) Effective(k probe.Kind) Set {
 // Resolve produces the complete constraints for a kind: defaults first, then
 // the preset's top-level keys, then its per-kind sub-table, then flags.
 func Resolve(p *Preset, k probe.Kind, flags Set) Constraints {
-	sparse := p.Effective(k).Merge(flags)
+	effective := p.Effective(k)
+	sparse := effective.Merge(flags)
 	c := defaults(k)
 
 	// A preset that only speaks about audio leaves the video stream alone.
-	if p != nil && p.Effective(k).OnlyAudio() && flags.Empty() && k == probe.KindVideo {
+	if p != nil && effective.OnlyAudio() && flags.Empty() && k == probe.KindVideo {
 		c.CopyVideo = true
 	}
 

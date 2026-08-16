@@ -39,98 +39,24 @@ func cmdRun(ctx context.Context, o options, cfg *config.Config, presetName strin
 		return fail(err)
 	}
 	preset, _ := cfg.Get(presetName)
-	tag := presetName
-	if tag == "" {
-		tag = "fit"
-	}
 
 	infos := probeAll(ctx, files, o.jobs)
+	jobs, early := planInputs(infos, o, preset, presetName, overrides)
 
-	var targets []*plan.Target
-	var jobs []*pending
-	var early []ui.Record
-
+	targets := make([]*plan.Target, 0, len(jobs))
+	inputs := make([]string, 0, len(infos))
+	for _, j := range jobs {
+		targets = append(targets, j.target)
+	}
 	for _, in := range infos {
-		rec := ui.Record{Input: displayName(in.Path), Kind: string(in.Kind), InputSize: in.Size}
-
-		if in.Kind == probe.KindUnknown {
-			// A path that could not even be opened is a failed input, exit
-			// code 1. A path that was read fine but isn't media fit
-			// recognises, such as a stray text file swept up by a glob, is a
-			// legitimate skip.
-			if in.Unreadable {
-				rec.Status = ui.StatusFail
-			} else {
-				rec.Status = ui.StatusSkip
-			}
-			rec.Note = orDefault(in.Note, "not a media file")
-			early = append(early, rec)
-			continue
-		}
-
-		cons := config.Resolve(preset, in.Kind, overrides)
-		spec, err := config.LookupFormat(in.Kind, cons.Format)
-		if err != nil {
-			rec.Status = ui.StatusFail
-			rec.Note = err.Error()
-			early = append(early, rec)
-			continue
-		}
-		spec, err = spec.AudioCodecOverride(cons.AudioCodec)
-		if err != nil {
-			rec.Status = ui.StatusFail
-			rec.Note = err.Error()
-			early = append(early, rec)
-			continue
-		}
-
-		if ok, why := plan.Satisfied(in, cons, spec); ok {
-			rec.Status = ui.StatusSkip
-			rec.Note = why
-			early = append(early, rec)
-			continue
-		}
-
-		t := &plan.Target{Input: in, Cons: cons, Spec: spec, Tag: tag, OutDir: o.outDir}
-		p := &pending{target: t, record: rec}
-
-		switch in.Kind {
-		case probe.KindVideo:
-			vp, err := solve.SolveVideo(videoInput(in), videoConstraints(cons, spec, in))
-			if err != nil {
-				rec.Status = ui.StatusFail
-				rec.Note = solverHeadline(err)
-				rec.Detail = solverDetail(err, presetName)
-				early = append(early, rec)
-				continue
-			}
-			if o.verbose || o.asJSON {
-				p.record.Constraints = &cons
-				p.record.Detail = vp.Reasoning
-			}
-			t.Width, t.Height = vp.Width, vp.Height
-			jobs = append(jobs, p)
-			targets = append(targets, t)
-			p.videoPlan = vp
-		case probe.KindImage:
-			t.Width, t.Height = solve.FitWithinExact(in.Width, in.Height, cons.Width, cons.Height)
-			jobs = append(jobs, p)
-			targets = append(targets, t)
-		case probe.KindAudio:
-			if !in.HasAudio {
-				rec.Status = ui.StatusSkip
-				rec.Note = "no audio stream"
-				early = append(early, rec)
-				continue
-			}
-			jobs = append(jobs, p)
-			targets = append(targets, t)
-		}
+		inputs = append(inputs, in.Path)
 	}
 
 	// Plan every output path before running anything, and refuse the whole
-	// batch rather than half-write it.
-	if err := plan.Resolve(targets); err != nil {
+	// batch rather than half-write it. Every probed path is protected, not just
+	// the ones that became targets: a file skipped for already fitting is still
+	// a file no output may land on.
+	if err := plan.Resolve(targets, inputs); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		return exitUsage
 	}
@@ -147,8 +73,12 @@ func cmdRun(ctx context.Context, o options, cfg *config.Config, presetName strin
 	for _, j := range jobs {
 		t := j.target
 		j.fp = fingerprint.Compute(t.Cons, t.Input.Size, t.Input.ModTime)
+		// Only a definite "not there" counts as absent. A path that cannot be
+		// stat'd for any other reason is something we know nothing about, and
+		// the overwrite guard is exactly the wrong thing to skip for it.
 		_, statErr := os.Stat(t.Out)
-		decision, why := plan.Decide(t.Out, j.fp, statErr == nil, o.force)
+		exists := statErr == nil || !os.IsNotExist(statErr)
+		decision, why := plan.Decide(t.Out, j.fp, exists, o.force)
 		switch decision {
 		case plan.SkipCurrent:
 			rep.Emit(ui.Record{Input: displayName(t.Input.Path), Kind: string(t.Input.Kind),
@@ -178,6 +108,87 @@ func cmdRun(ctx context.Context, o options, cfg *config.Config, presetName strin
 		return exitFail
 	}
 	return exitOK
+}
+
+// planInputs turns probed inputs into the jobs worth running, and a record for
+// every input that is already settled: unreadable, not media, already meeting
+// the constraints, or refused by the solver. Nothing here touches the
+// filesystem, so the whole batch is decided before any of it runs.
+func planInputs(infos []probe.Info, o options, preset *config.Preset, presetName string, overrides config.Set) (jobs []*pending, early []ui.Record) {
+	tag := presetName
+	if tag == "" {
+		tag = "fit"
+	}
+
+	for _, in := range infos {
+		rec := ui.Record{Input: displayName(in.Path), Kind: string(in.Kind), InputSize: in.Size}
+		settle := func(status ui.Status, note string) {
+			rec.Status, rec.Note = status, note
+			early = append(early, rec)
+		}
+
+		if in.Kind == probe.KindUnknown {
+			// A path that could not even be opened is a failed input, exit
+			// code 1. A path that was read fine but isn't media fit
+			// recognises, such as a stray text file swept up by a glob, is a
+			// legitimate skip.
+			status := ui.StatusSkip
+			if in.Unreadable {
+				status = ui.StatusFail
+			}
+			settle(status, orDefault(in.Note, "not a media file"))
+			continue
+		}
+
+		cons := config.Resolve(preset, in.Kind, overrides)
+		if err := cons.Validate(); err != nil {
+			settle(ui.StatusFail, err.Error())
+			continue
+		}
+		spec, err := config.LookupFormat(in.Kind, cons.Format)
+		if err != nil {
+			settle(ui.StatusFail, err.Error())
+			continue
+		}
+		spec, err = spec.AudioCodecOverride(cons.AudioCodec)
+		if err != nil {
+			settle(ui.StatusFail, err.Error())
+			continue
+		}
+
+		if ok, why := plan.Satisfied(in, cons, spec); ok {
+			settle(ui.StatusSkip, why)
+			continue
+		}
+
+		t := &plan.Target{Input: in, Cons: cons, Spec: spec, Tag: tag, OutDir: o.outDir}
+		p := &pending{target: t, record: rec}
+
+		switch in.Kind {
+		case probe.KindVideo:
+			vp, err := solve.SolveVideo(videoInput(in), videoConstraints(cons, spec, in))
+			if err != nil {
+				rec.Detail = solverDetail(err, presetName)
+				settle(ui.StatusFail, solverHeadline(err))
+				continue
+			}
+			if o.verbose || o.asJSON {
+				p.record.Constraints = &cons
+				p.record.Detail = vp.Reasoning
+			}
+			t.Width, t.Height = vp.Width, vp.Height
+			p.videoPlan = vp
+		case probe.KindImage:
+			t.Width, t.Height = solve.FitWithinExact(in.Width, in.Height, cons.Width, cons.Height)
+		case probe.KindAudio:
+			if !in.HasAudio {
+				settle(ui.StatusSkip, "no audio stream")
+				continue
+			}
+		}
+		jobs = append(jobs, p)
+	}
+	return jobs, early
 }
 
 func encodeAll(ctx context.Context, enc *encode.Encoder, rep *ui.Reporter, o options, jobs []*pending) []string {
@@ -323,6 +334,11 @@ func probeAll(ctx context.Context, files []string, workers int) []probe.Info {
 	items := make([]item, len(files))
 	for i, f := range files {
 		items[i] = item{i, f}
+		// Ctrl-C stops the pool mid-batch, leaving the slots it never reached
+		// as they started. A zero Info has an empty Kind, which is not
+		// KindUnknown, so an unfilled slot used to sail past the caller's
+		// unknown-kind guard and be reported as a failure with no filename.
+		out[i] = probe.Info{Path: f, Kind: probe.KindUnknown, Note: "interrupted before probing"}
 	}
 	pool(ctx, items, workers, func(it item) {
 		// Probe already fills in Note (and Unreadable, for a path that

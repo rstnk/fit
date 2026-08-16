@@ -137,7 +137,7 @@ audio_loudnorm = true       # video stream is copied through untouched
 | `tonemap` | video | `auto` (default), `on`, `off`. |
 | `strip` | all | `all` or `none`. Defaults to `all` for images and video, `none` for audio. |
 | `name` | all | Output name template. |
-| `audio_codec`, `audio_bitrate`, `audio_mono`, `audio_loudnorm` | video, audio | Audio encoding. |
+| `audio_codec`, `audio_bitrate`, `audio_mono`, `audio_loudnorm` | video, audio | Audio encoding. `audio_codec = "copy"` cannot be combined with `audio_mono` or `audio_loudnorm`: a copied stream cannot be filtered, and the pair is refused by name rather than left to ffmpeg. |
 
 Per-kind sub-tables are `[preset.image]`, `[preset.video]` and `[preset.audio]`. One rule decides scope: a key applies to the kind whose table it is in, and to every kind when written at the preset level. No key is exempt.
 
@@ -266,7 +266,7 @@ It also exists instead of a database. A fingerprint in the output survives renam
 
 ## Safety
 
-Every output path is planned before anything runs. The whole batch is refused, before any encoding, if two inputs map to one output or if any output path equals any input path. Paths are compared as the filesystem sees them, so `Photo.JPG` and `photo.jpg` are one file on macOS.
+Every output path is planned before anything runs. The whole batch is refused, before any encoding, if two inputs map to one output or if any output path equals any input path. Every path the run read counts as an input, including the ones skipped for already meeting the constraints, since a file being left alone is exactly the file an output must not land on. Paths are compared as the filesystem sees them, so `Photo.JPG` and `photo.jpg` are one file on macOS.
 
 ```
 Error: unsafe output paths, nothing was processed

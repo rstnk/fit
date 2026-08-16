@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/rstnk/fit/internal/config"
+	"github.com/rstnk/fit/internal/probe"
+	"github.com/rstnk/fit/internal/ui"
 )
 
 func testConfig(names ...string) *config.Config {
@@ -94,6 +97,42 @@ func TestResolvePreset(t *testing.T) {
 				t.Errorf("files = %v, want %v", files, c.wantFiles)
 			}
 		})
+	}
+}
+
+// TestProbeAll_InterruptedSlotsStayIdentifiable covers Ctrl-C landing mid-probe.
+// The worker pool stops filling the slice, and a zero Info has an empty Kind,
+// which is not KindUnknown: unfilled slots sailed past the unknown-kind guard in
+// planInputs and came out as failures with no filename attached.
+func TestProbeAll_InterruptedSlotsStayIdentifiable(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	files := []string{"a.jpg", "b.png"}
+	infos := probeAll(ctx, files, 4)
+	if len(infos) != len(files) {
+		t.Fatalf("probeAll returned %d infos for %d files", len(infos), len(files))
+	}
+	for i, in := range infos {
+		if in.Path != files[i] {
+			t.Errorf("infos[%d].Path = %q, want %q", i, in.Path, files[i])
+		}
+		if in.Kind != probe.KindUnknown {
+			t.Errorf("infos[%d].Kind = %q, want %q", i, in.Kind, probe.KindUnknown)
+		}
+	}
+
+	jobs, early := planInputs(infos, options{}, nil, "", config.Set{})
+	if len(jobs) != 0 {
+		t.Errorf("planInputs queued %d jobs from an interrupted probe", len(jobs))
+	}
+	for _, rec := range early {
+		if rec.Status != ui.StatusSkip {
+			t.Errorf("record for %q has status %q, want a skip", rec.Input, rec.Status)
+		}
+		if rec.Input == "" {
+			t.Error("a record came out with no filename to show the user")
+		}
 	}
 }
 

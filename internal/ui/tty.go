@@ -22,7 +22,7 @@ func isTerminal(f *os.File) bool {
 // NO_COLOR convention (https://no-color.org, any non-empty value disables
 // colour) and TERM=dumb ahead of the terminal check itself.
 func wantsColour(f *os.File) bool {
-	if _, set := os.LookupEnv("NO_COLOR"); set {
+	if os.Getenv("NO_COLOR") != "" {
 		return false
 	}
 	if os.Getenv("TERM") == "dumb" {

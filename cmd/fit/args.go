@@ -6,7 +6,10 @@ import (
 )
 
 // boolFlags take no value, which the pre-pass needs to know so it can tell a
-// flag's argument apart from a positional.
+// flag's argument apart from a positional. Being listed here says only that a
+// spelling never consumes the next argument, not that fit accepts it: help and
+// version are subcommands, and `fit --version` is left to the FlagSet to
+// reject by name rather than swallowing the filename after it.
 var boolFlags = map[string]bool{
 	"n": true, "dry-run": true,
 	"f": true, "force": true,

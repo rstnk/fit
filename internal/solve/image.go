@@ -169,9 +169,6 @@ func (s *ImageSearch) recordLossless(size int64) {
 // the best one found.
 func (s *ImageSearch) Best() (ImageAttempt, bool) { return s.best, s.haveBest }
 
-// Rounds returns how many rescales the search has used.
-func (s *ImageSearch) Rounds() int { return s.round }
-
 func scaleFor(round int) float64 {
 	scale := 1.0
 	for range round {

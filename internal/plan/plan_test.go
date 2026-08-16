@@ -214,7 +214,7 @@ func newTarget(inputPath string, nameTemplate string) *Target {
 func TestResolve_TagDroppedWhenExtensionDiffers(t *testing.T) {
 	dir := t.TempDir()
 	tgt := newTarget(filepath.Join(dir, "photo.png"), config.DefaultName)
-	if err := Resolve([]*Target{tgt}); err != nil {
+	if err := Resolve([]*Target{tgt}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := filepath.Base(tgt.Out), "photo.jpg"; got != want {
@@ -225,7 +225,7 @@ func TestResolve_TagDroppedWhenExtensionDiffers(t *testing.T) {
 func TestResolve_TagKeptWhenExtensionMatches(t *testing.T) {
 	dir := t.TempDir()
 	tgt := newTarget(filepath.Join(dir, "clip.jpg"), config.DefaultName)
-	if err := Resolve([]*Target{tgt}); err != nil {
+	if err := Resolve([]*Target{tgt}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := filepath.Base(tgt.Out), "clip.chat.jpg"; got != want {
@@ -239,14 +239,14 @@ func TestResolve_NamingIsBatchIndependent(t *testing.T) {
 	dir := t.TempDir()
 
 	alone := newTarget(filepath.Join(dir, "p1.png"), config.DefaultName)
-	if err := Resolve([]*Target{alone}); err != nil {
+	if err := Resolve([]*Target{alone}, nil); err != nil {
 		t.Fatal(err)
 	}
 	aloneOut := filepath.Base(alone.Out)
 
 	withSibling := newTarget(filepath.Join(dir, "p1.png"), config.DefaultName)
 	sibling := newTarget(filepath.Join(dir, "p1.jpeg"), config.DefaultName)
-	err := Resolve([]*Target{withSibling, sibling})
+	err := Resolve([]*Target{withSibling, sibling}, nil)
 
 	if aloneOut != "p1.jpg" {
 		t.Fatalf("sanity: alone.Out = %q, want p1.jpg", aloneOut)
@@ -265,7 +265,7 @@ func TestResolve_CollisionBetweenTwoInputs(t *testing.T) {
 	dir := t.TempDir()
 	a := newTarget(filepath.Join(dir, "a.jpg"), "same.{ext}")
 	b := newTarget(filepath.Join(dir, "b.jpg"), "same.{ext}")
-	err := Resolve([]*Target{a, b})
+	err := Resolve([]*Target{a, b}, nil)
 	if err == nil {
 		t.Fatal("expected a collision error")
 	}
@@ -278,9 +278,37 @@ func TestResolve_OutputEqualsInput(t *testing.T) {
 	dir := t.TempDir()
 	// Template renders to exactly the input's own name.
 	tgt := newTarget(filepath.Join(dir, "photo.jpg"), "{stem}.{ext}")
-	err := Resolve([]*Target{tgt})
+	err := Resolve([]*Target{tgt}, nil)
 	if err == nil {
 		t.Fatal("expected an error when an output path equals an input path")
+	}
+}
+
+// TestResolve_OutputEqualsSkippedInput is the regression test for the worst of
+// these: photo.jpg already met the constraints so it never became a target,
+// photo.png rendered to photo.jpg, and with -f the run reported photo.jpg as
+// left alone while overwriting it. Only targets used to be protected.
+func TestResolve_OutputEqualsSkippedInput(t *testing.T) {
+	dir := t.TempDir()
+	skipped := filepath.Join(dir, "photo.jpg")
+	tgt := newTarget(filepath.Join(dir, "photo.png"), config.DefaultName)
+
+	if err := Resolve([]*Target{tgt}, nil); err != nil {
+		t.Fatalf("sanity: without the skipped input this batch is fine: %v", err)
+	}
+	if got := filepath.Base(tgt.Out); got != "photo.jpg" {
+		t.Fatalf("sanity: Out = %q, want photo.jpg", got)
+	}
+
+	err := Resolve([]*Target{tgt}, []string{skipped})
+	if err == nil {
+		t.Fatal("expected a refusal: the output lands on an input the run read")
+	}
+	if _, ok := errors.AsType[*CollisionError](err); !ok {
+		t.Fatalf("error is %T, want *CollisionError", err)
+	}
+	if !strings.Contains(err.Error(), "photo.jpg") {
+		t.Errorf("error %q does not name the file that would be destroyed", err)
 	}
 }
 
@@ -291,7 +319,7 @@ func TestResolve_CaseInsensitiveCollisionOnDarwin(t *testing.T) {
 	dir := t.TempDir()
 	a := newTarget(filepath.Join(dir, "Photo.PNG"), "out.{ext}")
 	b := newTarget(filepath.Join(dir, "photo.png"), "OUT.{ext}")
-	err := Resolve([]*Target{a, b})
+	err := Resolve([]*Target{a, b}, nil)
 	if err == nil {
 		t.Fatal("expected out.jpg and OUT.jpg to collide on a case-insensitive filesystem")
 	}
@@ -319,6 +347,33 @@ func TestRender_HashComputedOnce(t *testing.T) {
 	}
 	if h1 != h2 {
 		t.Error("contentHash recomputed on a second call instead of using the cached value")
+	}
+}
+
+// TestRender_TokenInStemIsNotReplacedAgain pins the output name down when the
+// input's own name contains a template token. Replacing over a map let Go's
+// iteration order decide whether the stem's "{tag}" was rewritten, so identical
+// runs on the same file produced two different output names.
+func TestRender_TokenInStemIsNotReplacedAgain(t *testing.T) {
+	dir := t.TempDir()
+	tgt := newTarget(filepath.Join(dir, "foo{tag}.png"), config.DefaultName)
+
+	first, err := Render(tgt, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := filepath.Base(first), "foo{tag}.chat.jpg"; got != want {
+		t.Errorf("Render = %q, want %q: a token in the stem is literal text", got, want)
+	}
+	// Map order varied run to run, so one repeat is not proof; a hundred is.
+	for range 100 {
+		again, err := Render(tgt, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if again != first {
+			t.Fatalf("Render is not deterministic: %q then %q", first, again)
+		}
 	}
 }
 

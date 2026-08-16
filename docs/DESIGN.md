@@ -317,7 +317,7 @@ output exists?
 
 ## Safety
 
-Plan every output path before running anything. Refuse the whole batch, before any encoding, if two inputs map to one output or if any output path equals any input path. Compare paths as the filesystem sees them, so `Photo.JPG` and `photo.jpg` are one file on macOS.
+Plan every output path before running anything. Refuse the whole batch, before any encoding, if two inputs map to one output or if any output path equals any input path. Every path the run read counts as an input, including the ones skipped for already meeting the constraints: deriving the protected set from the files still due to be encoded is how an output came to land on a file the same run had just reported as left alone. Compare paths as the filesystem sees them, so `Photo.JPG` and `photo.jpg` are one file on macOS.
 
 ```
 Error: unsafe output paths, nothing was processed

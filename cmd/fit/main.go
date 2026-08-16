@@ -6,6 +6,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"runtime"
@@ -50,6 +51,27 @@ func main() {
 	os.Exit(run(os.Args[1:]))
 }
 
+// Most flags have both a short and a long spelling bound to the same variable.
+// These bind every spelling in one call, so a flag's help text is written once
+// and the two spellings cannot drift apart.
+func strFlag(fs *flag.FlagSet, p *string, usage string, names ...string) {
+	for _, n := range names {
+		fs.StringVar(p, n, "", usage)
+	}
+}
+
+func boolFlag(fs *flag.FlagSet, p *bool, usage string, names ...string) {
+	for _, n := range names {
+		fs.BoolVar(p, n, false, usage)
+	}
+}
+
+func intFlag(fs *flag.FlagSet, p *int, usage string, names ...string) {
+	for _, n := range names {
+		fs.IntVar(p, n, 0, usage)
+	}
+}
+
 func run(argv []string) int {
 	if len(argv) == 0 {
 		usage(os.Stdout)
@@ -66,26 +88,20 @@ func run(argv []string) int {
 	fs.SetOutput(os.Stderr)
 	fs.Usage = func() { usage(os.Stderr) }
 
-	fs.StringVar(&o.target, "t", "", "preset name")
-	fs.StringVar(&o.target, "target", "", "preset name")
-	fs.StringVar(&o.outDir, "o", "", "output directory")
-	fs.StringVar(&o.outDir, "out-dir", "", "output directory")
-	fs.BoolVar(&o.dryRun, "n", false, "print commands, write nothing")
-	fs.BoolVar(&o.dryRun, "dry-run", false, "print commands, write nothing")
-	fs.BoolVar(&o.force, "f", false, "overwrite outputs")
-	fs.BoolVar(&o.force, "force", false, "overwrite outputs")
-	fs.IntVar(&o.jobs, "j", 0, "concurrency")
-	fs.BoolVar(&o.asJSON, "json", false, "NDJSON on stdout")
-	fs.BoolVar(&o.verbose, "v", false, "show the solver's reasoning")
-	fs.BoolVar(&o.verbose, "verbose", false, "show the solver's reasoning")
-	fs.StringVar(&o.confPath, "config", "", "presets file")
-	fs.BoolVar(&o.noPreset, "no-preset", false, "ignore presets, including the default")
-	fs.StringVar(&o.under, "under", "", "size cap, e.g. 8M")
-	fs.IntVar(&o.width, "width", 0, "width ceiling")
-	fs.IntVar(&o.height, "height", 0, "height ceiling")
-	fs.IntVar(&o.quality, "q", 0, "quality 1-100")
-	fs.IntVar(&o.quality, "quality", 0, "quality 1-100")
-	fs.StringVar(&o.format, "format", "", "output format")
+	strFlag(fs, &o.target, "preset name", "t", "target")
+	strFlag(fs, &o.outDir, "output directory", "o", "out-dir")
+	strFlag(fs, &o.confPath, "presets file", "config")
+	strFlag(fs, &o.under, "size cap, e.g. 8M", "under")
+	strFlag(fs, &o.format, "output format", "format")
+	boolFlag(fs, &o.dryRun, "print commands, write nothing", "n", "dry-run")
+	boolFlag(fs, &o.force, "overwrite outputs", "f", "force")
+	boolFlag(fs, &o.verbose, "show the solver's reasoning", "v", "verbose")
+	boolFlag(fs, &o.asJSON, "NDJSON on stdout", "json")
+	boolFlag(fs, &o.noPreset, "ignore presets, including the default", "no-preset")
+	intFlag(fs, &o.jobs, "concurrency", "j")
+	intFlag(fs, &o.quality, "quality 1-100", "q", "quality")
+	intFlag(fs, &o.width, "width ceiling", "width")
+	intFlag(fs, &o.height, "height ceiling", "height")
 
 	if err := fs.Parse(flagArgs); err != nil {
 		return exitUsage
@@ -99,7 +115,11 @@ func run(argv []string) int {
 		}
 	})
 	if o.jobs <= 0 {
+		// -j 0 asks for the default rather than for no workers, so it must not
+		// count as a choice: left set, it would put the core count against the
+		// video path, which deliberately runs one job at a time.
 		o.jobs = runtime.NumCPU()
+		o.jobsSet = false
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -203,7 +223,7 @@ func failRun(err error) int {
 	return exitFail
 }
 
-func usage(w *os.File) {
+func usage(w io.Writer) {
 	fmt.Fprint(w, `fit — get media files to fit a target
 
   fit <preset> [files...] [overrides]   apply a named preset

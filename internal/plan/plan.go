@@ -39,13 +39,19 @@ type Target struct {
 // Resolve fills in Out for every target and refuses the batch if the set of
 // output paths is unsafe.
 //
+// inputs is every path the run read, not just the ones that became targets. A
+// file skipped for already meeting the constraints never reaches a target, and
+// deriving the protected set from targets alone let an output land on one of
+// those and destroy it: the run reported the file as left alone and overwrote
+// it in the same breath.
+//
 // The tag-drop decision is made per target, not per batch: the same input
 // under the same preset always names its output the same way, whether it
 // runs alone or alongside others. A name that collides because of that is a
 // hard error from check() below, not a silent fallback to the tagged form,
 // since a silent fallback is what let two different batches of the same
 // input write two different filenames for the same output.
-func Resolve(targets []*Target) error {
+func Resolve(targets []*Target, inputs []string) error {
 	for _, t := range targets {
 		tagged, err := Render(t, true)
 		if err != nil {
@@ -65,13 +71,16 @@ func Resolve(targets []*Target) error {
 		}
 		t.Out = out
 	}
-	return check(targets)
+	return check(targets, inputs)
 }
 
-func check(targets []*Target) error {
+func check(targets []*Target, inputs []string) error {
 	inputNames := map[string]string{}
 	for _, t := range targets {
 		inputNames[key(t.Input.Path)] = filepath.Base(t.Input.Path)
+	}
+	for _, p := range inputs {
+		inputNames[key(p)] = filepath.Base(p)
 	}
 
 	byOut := map[string][]*Target{}
@@ -139,25 +148,26 @@ func Render(t *Target, withTag bool) (string, error) {
 	base := filepath.Base(t.Input.Path)
 	stem := strings.TrimSuffix(base, filepath.Ext(base))
 
-	out := tmpl
-	repl := map[string]string{
-		"{stem}":   stem,
-		"{ext}":    t.Spec.Ext,
-		"{tag}":    t.Tag,
-		"{width}":  fmt.Sprint(t.Width),
-		"{height}": fmt.Sprint(t.Height),
-		"{date}":   time.Now().Format("2006-01-02"),
+	// One left-to-right pass, never a loop of ReplaceAll over a map: a stem
+	// that itself contains "{tag}" would otherwise be rewritten or not
+	// depending on Go's map iteration order, so the same file could land at
+	// two different output names on two identical runs.
+	repl := []string{
+		"{stem}", stem,
+		"{ext}", t.Spec.Ext,
+		"{tag}", t.Tag,
+		"{width}", fmt.Sprint(t.Width),
+		"{height}", fmt.Sprint(t.Height),
+		"{date}", time.Now().Format("2006-01-02"),
 	}
-	if strings.Contains(out, "{hash}") {
+	if strings.Contains(tmpl, "{hash}") {
 		h, err := t.contentHash()
 		if err != nil {
 			return "", fmt.Errorf("hashing %s: %w", t.Input.Path, err)
 		}
-		repl["{hash}"] = h
+		repl = append(repl, "{hash}", h)
 	}
-	for k, v := range repl {
-		out = strings.ReplaceAll(out, k, v)
-	}
+	out := strings.NewReplacer(repl...).Replace(tmpl)
 	dir := t.OutDir
 	if dir == "" {
 		dir = filepath.Dir(t.Input.Path)

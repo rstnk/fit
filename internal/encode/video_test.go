@@ -313,6 +313,32 @@ func TestAudioOnlyArgs_LosslessTakesNoBitrate(t *testing.T) {
 	}
 }
 
+// TestAudioOnlyArgs_CopyTakesNoEncodingFlags is the regression test for an
+// audio-only input under audio_codec = "copy": ffmpeg rejects a filtergraph on
+// a copied stream outright, so `fit` died on "Invalid argument" where the video
+// path had guarded the same three flags all along.
+func TestAudioOnlyArgs_CopyTakesNoEncodingFlags(t *testing.T) {
+	e := newEncoder()
+	cons := config.Constraints{Strip: "none", AudioCodec: "copy",
+		AudioBitrate: 128, AudioMono: true, AudioLoudnorm: true}
+	tgt := audioTarget("m4a", cons)
+	spec, err := tgt.Spec.AudioCodecOverride("copy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgt.Spec = spec
+
+	args := e.audioOnlyArgs(Job{Target: tgt}, false, 128, "out.m4a")
+	if !hasFlagValue(args, "-c:a", "copy") {
+		t.Fatalf("args = %v, want -c:a copy", args)
+	}
+	for _, flag := range []string{"-b:a", "-ac", "-af"} {
+		if slices.Contains(args, flag) {
+			t.Errorf("args = %v, must not pass %s alongside -c:a copy", args, flag)
+		}
+	}
+}
+
 // TestAudioDefaultsKeepTags is the regression test for music losing its tags:
 // the strip default that protects photographs from leaking GPS would take the
 // artist and title off every track it touched.

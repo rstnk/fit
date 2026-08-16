@@ -110,6 +110,73 @@ func TestCanonical_CoversEveryField(t *testing.T) {
 	}
 }
 
+// TestParseSet_CoversEverySetField closes the gap the other two reflection
+// tests leave open. Resolve and Canonical are pinned field by field, but a
+// field added to Set with no constraintKeys entry is simply unwritable: the
+// preset key it exists for comes back as an unknown key.
+func TestParseSet_CoversEverySetField(t *testing.T) {
+	ct := reflect.TypeFor[Constraints]()
+	for field := range reflect.TypeFor[Set]().Fields() {
+		cf, ok := ct.FieldByName(field.Name)
+		if !ok {
+			t.Errorf("Set.%s has no matching Constraints field", field.Name)
+			continue
+		}
+		key, _, _ := strings.Cut(cf.Tag.Get("json"), ",")
+		if key == "" {
+			t.Errorf("Constraints.%s has no json tag naming its preset key", field.Name)
+			continue
+		}
+		if !constraintKeys[key] {
+			t.Errorf("Set.%s is the preset key %q, which constraintKeys does not accept",
+				field.Name, key)
+		}
+	}
+}
+
+// TestParseSet_EveryKeyHasAParser hands each accepted key a value no parser can
+// take. A key with a case in the switch rejects it; a key whose case was never
+// written falls straight through and reports success having stored nothing.
+func TestParseSet_EveryKeyHasAParser(t *testing.T) {
+	for key := range constraintKeys {
+		tbl := map[string]any{key: []any{"not a scalar"}}
+		if _, err := parseSet(tbl, "p", "presets.toml"); err == nil {
+			t.Errorf("parseSet accepted a list for %q, so the key has no case in the switch", key)
+		}
+	}
+}
+
+func TestValidate_CopyCannotBeFiltered(t *testing.T) {
+	cases := []struct {
+		name    string
+		cons    Constraints
+		wantErr string
+	}{
+		{"copy alone is fine", Constraints{AudioCodec: "copy"}, ""},
+		{"filters without copy are fine", Constraints{AudioCodec: "aac", AudioLoudnorm: true}, ""},
+		{"copy with loudnorm", Constraints{AudioCodec: "copy", AudioLoudnorm: true}, "audio_loudnorm"},
+		{"copy with mono", Constraints{AudioCodec: "copy", AudioMono: true}, "audio_mono"},
+		{"copy with both", Constraints{AudioCodec: "COPY", AudioMono: true, AudioLoudnorm: true}, "audio_mono and audio_loudnorm"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := c.cons.Validate()
+			if c.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Validate() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("Validate() = nil, want an error naming the conflicting keys")
+			}
+			if !strings.Contains(err.Error(), c.wantErr) {
+				t.Errorf("Validate() = %q, want it to name %q", err, c.wantErr)
+			}
+		})
+	}
+}
+
 func TestCanonical_StableRegardlessOfFieldOrder(t *testing.T) {
 	// The whole point of sorting is that Canonical is deterministic; assert
 	// it directly rather than trusting sort.Strings by inspection.
